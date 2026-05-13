@@ -1,0 +1,44 @@
+name: weather
+
+on:
+  schedule:
+    # 08:00 UTC = 10:00 lokal (Sommer) / 09:00 lokal (Winter) — nach 00Z-Lauf
+    # 20:00 UTC = 22:00 lokal (Sommer) / 21:00 lokal (Winter) — nach 12Z-Lauf
+    - cron: "0 8,20 * * *"
+  workflow_dispatch:        # manueller Trigger über die Actions-UI
+  push:
+    branches: [main]        # bei jedem Push auf main auch neu bauen
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Build site
+        run: uv run python make_html.py
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
