@@ -193,11 +193,11 @@ HTML = """<!doctype html>
   <p class="updated">Aktualisiert {updated} UTC</p>
 </header>
 
-<section class="cards">{cards_html}</section>
-
 <section class="chart">
   <img src="forecast.png" alt="3-Tages-Vorhersage" loading="lazy">
 </section>
+
+<section class="cards">{cards_html}</section>
 
 <details>
   <summary>Stündliche Werte</summary>
