@@ -8,8 +8,9 @@ Local run: `uv run python make_html.py` → open site/index.html.
 """
 import locale
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from weather_bredeney_hres import (
     LOCATION, MODEL, TZ, daily_summary, fetch_hres, plot,
@@ -190,7 +191,7 @@ HTML = """<!doctype html>
 <header>
   <h1>{location}</h1>
   <p class="meta">ECMWF HRES · {lat:.2f}°N {lon:.2f}°E · {elev:.0f} m</p>
-  <p class="updated">Aktualisiert {updated} UTC</p>
+  <p class="updated">Aktualisiert {updated}</p>
 </header>
 
 <section class="chart">
@@ -278,7 +279,7 @@ def build():
         location=LOCATION,
         lat=df.attrs["grid_lat"], lon=df.attrs["grid_lon"],
         elev=df.attrs["elevation"], model=MODEL,
-        updated=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        updated=datetime.now(ZoneInfo(TZ)).strftime("%d.%m.%Y %H:%M %Z"),
         cards_html=build_cards(daily, today_date),
         hourly_html=build_hourly(df, today_date),
     )
