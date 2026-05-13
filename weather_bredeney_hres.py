@@ -17,20 +17,20 @@ import requests
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception: pass
 
-LAT, LON = 51.413, 6.996  # Essen-Bredeney
-LOCATION = "Essen-Bredeney"
+LAT, LON = 51.413, 6.996  # Essen-Bredeney (default for standalone run)
+LOCATION = "Essen"
 MODEL = "ecmwf_ifs025"     # HRES deterministic
 TZ = "Europe/Berlin"
 OUT_DIR = Path("data")
 OUT_DIR.mkdir(exist_ok=True)
 
 
-def fetch_hres(days: int = 3) -> pd.DataFrame:
+def fetch_hres(lat: float = LAT, lon: float = LON, days: int = 3) -> pd.DataFrame:
     start = date.today()
     end = start + timedelta(days=days - 1)
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": LAT, "longitude": LON,
+        "latitude": lat, "longitude": lon,
         "hourly": "temperature_2m,precipitation,sunshine_duration",
         "models": MODEL,
         "start_date": start.isoformat(),
@@ -83,7 +83,7 @@ def print_tables(df: pd.DataFrame) -> None:
     print(out.to_string())
 
 
-def plot(df: pd.DataFrame, path: Path) -> None:
+def plot(df: pd.DataFrame, path: Path, title: str = LOCATION) -> None:
     plt.rcParams.update({
         "font.size": 13,
         "axes.titlesize": 14,
@@ -100,7 +100,7 @@ def plot(df: pd.DataFrame, path: Path) -> None:
     ax.fill_between(df.index, df["temp_c"], alpha=0.15, color="#c0392b")
     ax.set_ylabel("Temperatur [°C]")
     ax.grid(True, alpha=0.3)
-    ax.set_title(f"{LOCATION} — ECMWF HRES", pad=10)
+    ax.set_title(f"{title} — ECMWF HRES", pad=10)
 
     ax = axes[1]
     ax.bar(df.index, df["precip_mm"], width=1/24, color="#2980b9",

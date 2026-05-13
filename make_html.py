@@ -1,9 +1,10 @@
 """
 Builds a static `site/` directory with the latest ECMWF HRES forecast for
-Essen-Bredeney: chart PNG, daily summary cards, hourly tables.
+multiple cities. Generates one HTML page + one PNG per city, with a
+top-right dropdown to switch between them. Default (index.html) is Essen.
+
 Optimised for iPhone viewing (responsive, dark mode, safe-area aware).
 
-Run by the GitHub Actions workflow twice a day; output is deployed to Pages.
 Local run: `uv run python make_html.py` → open site/index.html.
 """
 import locale
@@ -13,13 +14,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from weather_bredeney_hres import (
-    LOCATION, MODEL, TZ, daily_summary, fetch_hres, plot,
+    MODEL, TZ, daily_summary, fetch_hres, plot,
 )
 
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception: pass
 
-# best-effort German weekday names
 for loc in ("de_DE.UTF-8", "de_DE", "German_Germany.1252", "de"):
     try:
         locale.setlocale(locale.LC_TIME, loc)
@@ -32,6 +32,14 @@ SITE.mkdir(exist_ok=True)
 
 WEEKDAY_DE = {0: "Mo", 1: "Di", 2: "Mi", 3: "Do", 4: "Fr", 5: "Sa", 6: "So"}
 
+# Coordinates → snapped by Open-Meteo to the nearest 0.25° grid point.
+CITIES = [
+    {"slug": "essen",             "name": "Essen",             "lat": 51.413, "lon":  6.996, "default": True},
+    {"slug": "tuebingen",         "name": "Tübingen",          "lat": 48.521, "lon":  9.058},
+    {"slug": "hoehr-grenzhausen", "name": "Höhr-Grenzhausen",  "lat": 50.435, "lon":  7.670},
+    {"slug": "potsdam",           "name": "Potsdam",           "lat": 52.391, "lon": 13.065},
+]
+
 
 HTML = """<!doctype html>
 <html lang="de">
@@ -42,7 +50,7 @@ HTML = """<!doctype html>
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>{location}</title>
+<title>{name}</title>
 <style>
   :root {{
     --bg: #f6f6f7;
@@ -53,6 +61,7 @@ HTML = """<!doctype html>
     --temp: #c0392b;
     --rain: #2980b9;
     --sun:  #e69100;
+    --chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path fill='%236e6e73' d='M6 8 0 0h12z'/></svg>");
   }}
   @media (prefers-color-scheme: dark) {{
     :root {{
@@ -64,6 +73,7 @@ HTML = """<!doctype html>
       --temp: #ff6b5e;
       --rain: #5ac8fa;
       --sun:  #ffd60a;
+      --chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path fill='%2398989e' d='M6 8 0 0h12z'/></svg>");
     }}
   }}
   * {{ box-sizing: border-box; }}
@@ -81,12 +91,47 @@ HTML = """<!doctype html>
     margin: 0 auto;
   }}
   header {{ margin-bottom: 1.5rem; }}
+  .topbar {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+  }}
   h1 {{
-    font-size: 2rem; margin: 0 0 0.25rem;
+    font-size: 2rem; margin: 0;
     font-weight: 700; letter-spacing: -0.02em;
   }}
+  .city-switcher {{
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--card);
+    background-image: var(--chevron);
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 10px 7px;
+    border: 0.5px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 500;
+    padding: 0.55rem 1.9rem 0.55rem 0.85rem;
+    cursor: pointer;
+    min-height: 38px;
+  }}
+  .city-switcher:focus {{ outline: 2px solid var(--temp); outline-offset: 2px; }}
   .meta, .updated {{ color: var(--text-dim); font-size: 0.8rem; margin: 0; }}
   .updated {{ margin-top: 0.4rem; }}
+
+  .chart {{
+    background: var(--card);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    padding: 0.5rem;
+    margin-bottom: 1.5rem;
+  }}
+  .chart img {{ display: block; width: 100%; height: auto; border-radius: 10px; }}
 
   .cards {{ display: grid; gap: 0.75rem; margin-bottom: 1.5rem; }}
   .card {{
@@ -122,15 +167,6 @@ HTML = """<!doctype html>
   .stat.tmax .v {{ color: var(--temp); }}
   .stat.rain .v {{ color: var(--rain); }}
   .stat.sun  .v {{ color: var(--sun);  }}
-
-  .chart {{
-    background: var(--card);
-    border: 0.5px solid var(--border);
-    border-radius: 16px;
-    padding: 0.5rem;
-    margin-bottom: 1.5rem;
-  }}
-  .chart img {{ display: block; width: 100%; height: auto; border-radius: 10px; }}
 
   details {{
     background: var(--card);
@@ -189,13 +225,19 @@ HTML = """<!doctype html>
 </head>
 <body>
 <header>
-  <h1>{location}</h1>
+  <div class="topbar">
+    <h1>{name}</h1>
+    <select class="city-switcher" aria-label="Stadt wählen"
+            onchange="if(this.value)location.href=this.value">
+{options}
+    </select>
+  </div>
   <p class="meta">ECMWF HRES · {lat:.2f}°N {lon:.2f}°E · {elev:.0f} m</p>
   <p class="updated">Aktualisiert {updated}</p>
 </header>
 
 <section class="chart">
-  <img src="forecast.png" alt="3-Tages-Vorhersage" loading="lazy">
+  <img src="{png}" alt="3-Tages-Vorhersage" loading="lazy">
 </section>
 
 <section class="cards">{cards_html}</section>
@@ -213,6 +255,18 @@ HTML = """<!doctype html>
 </body>
 </html>
 """
+
+
+def _page_url(city):
+    return "index.html" if city.get("default") else f"{city['slug']}.html"
+
+
+def _options(current_slug):
+    out = []
+    for c in CITIES:
+        sel = " selected" if c["slug"] == current_slug else ""
+        out.append(f'      <option value="{_page_url(c)}"{sel}>{c["name"]}</option>')
+    return "\n".join(out)
 
 
 def _day_label(d, today_date):
@@ -268,23 +322,35 @@ def build_hourly(df, today_date):
     return "\n".join(blocks)
 
 
-def build():
-    df = fetch_hres(days=3)
-    plot(df, SITE / "forecast.png")
+def build_city(city, updated_str):
+    print(f"--- {city['name']} ---")
+    df = fetch_hres(lat=city["lat"], lon=city["lon"], days=3)
+    png_name = f"forecast_{city['slug']}.png"
+    plot(df, SITE / png_name, title=city["name"])
 
     daily = daily_summary(df)
     today_date = df.index[0].date()
 
     html = HTML.format(
-        location=LOCATION,
+        name=city["name"],
         lat=df.attrs["grid_lat"], lon=df.attrs["grid_lon"],
         elev=df.attrs["elevation"], model=MODEL,
-        updated=datetime.now(ZoneInfo(TZ)).strftime("%d.%m.%Y %H:%M %Z"),
+        updated=updated_str,
+        png=png_name,
+        options=_options(city["slug"]),
         cards_html=build_cards(daily, today_date),
         hourly_html=build_hourly(df, today_date),
     )
-    (SITE / "index.html").write_text(html, encoding="utf-8")
-    print(f"wrote {SITE/'index.html'} + {SITE/'forecast.png'}")
+
+    out = SITE / _page_url(city)
+    out.write_text(html, encoding="utf-8")
+    print(f"wrote {out} + {SITE/png_name}")
+
+
+def build():
+    updated_str = datetime.now(ZoneInfo(TZ)).strftime("%d.%m.%Y %H:%M %Z")
+    for city in CITIES:
+        build_city(city, updated_str)
 
 
 if __name__ == "__main__":
