@@ -84,15 +84,23 @@ def print_tables(df: pd.DataFrame) -> None:
 
 
 def plot(df: pd.DataFrame, path: Path) -> None:
-    fig, axes = plt.subplots(3, 1, figsize=(13, 9), sharex=True)
+    plt.rcParams.update({
+        "font.size": 13,
+        "axes.titlesize": 14,
+        "axes.labelsize": 13,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    })
+    fig, axes = plt.subplots(3, 1, figsize=(7, 10), sharex=True)
 
     ax = axes[0]
-    ax.plot(df.index, df["temp_c"], color="#c0392b", lw=1.8)
+    ax.plot(df.index, df["temp_c"], color="#c0392b", lw=2.4)
     ax.fill_between(df.index, df["temp_c"], alpha=0.15, color="#c0392b")
     ax.set_ylabel("Temperatur [°C]")
     ax.grid(True, alpha=0.3)
-    ax.set_title(f"ECMWF HRES — {LOCATION}  ({df.attrs['grid_lat']:.2f}°N, "
-                 f"{df.attrs['grid_lon']:.2f}°E, {df.attrs['elevation']:.0f} m)")
+    ax.set_title(f"{LOCATION} — ECMWF HRES", pad=10)
 
     ax = axes[1]
     ax.bar(df.index, df["precip_mm"], width=1/24, color="#2980b9",
@@ -107,7 +115,6 @@ def plot(df: pd.DataFrame, path: Path) -> None:
     ax.set_ylim(0, 65)
     ax.grid(True, alpha=0.3)
 
-    # day boundaries + labels
     for ax in axes:
         for d in pd.date_range(df.index[0].normalize(),
                                df.index[-1].normalize() + pd.Timedelta(days=1),
@@ -117,11 +124,11 @@ def plot(df: pd.DataFrame, path: Path) -> None:
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%a %d.%m"))
     axes[-1].xaxis.set_minor_locator(mdates.HourLocator(byhour=[6, 12, 18]))
     axes[-1].xaxis.set_minor_formatter(mdates.DateFormatter("%Hh"))
-    axes[-1].tick_params(axis="x", which="major", pad=18, labelsize=10)
-    axes[-1].tick_params(axis="x", which="minor", labelsize=7, colors="grey")
+    axes[-1].tick_params(axis="x", which="major", pad=22, labelsize=11)
+    axes[-1].tick_params(axis="x", which="minor", labelsize=9, colors="grey")
 
     fig.tight_layout()
-    fig.savefig(path, dpi=130)
+    fig.savefig(path, dpi=160)
     plt.close(fig)
     print(f"\nwrote {path}")
 
