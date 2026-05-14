@@ -2,9 +2,9 @@ name: weather
 
 on:
   schedule:
-    # 07:53 UTC = 9:53 lokal (Sommer) / 8:53 lokal (Winter) — nach 00Z-Lauf
-    # 19:53 UTC = 21:53 lokal (Sommer) / 20:53 lokal (Winter) — nach 12Z-Lauf
-    - cron: "53 7,19 * * *"
+    # 01:53 UTC = 3:53 lokal (Sommer) / 2:53 lokal (Winter) — nach 00Z-Lauf
+    # 13:53 UTC = 15:53 lokal (Sommer) / 14:53 lokal (Winter) — nach 12Z-Lauf
+    - cron: "53 1,13 * * *"
   workflow_dispatch:        # manueller Trigger über die Actions-UI
   push:
     branches: [main]        # bei jedem Push auf main auch neu bauen

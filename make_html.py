@@ -322,7 +322,7 @@ def build_hourly(df, today_date):
     return "\n".join(blocks)
 
 
-def build_city(city, updated_str):
+def build_city(city, updated_str, cache_buster):
     print(f"--- {city['name']} ---")
     df = fetch_hres(lat=city["lat"], lon=city["lon"], days=3)
     png_name = f"forecast_{city['slug']}.png"
@@ -336,7 +336,7 @@ def build_city(city, updated_str):
         lat=df.attrs["grid_lat"], lon=df.attrs["grid_lon"],
         elev=df.attrs["elevation"], model=MODEL,
         updated=updated_str,
-        png=png_name,
+        png=f"{png_name}?v={cache_buster}",
         options=_options(city["slug"]),
         cards_html=build_cards(daily, today_date),
         hourly_html=build_hourly(df, today_date),
@@ -348,9 +348,11 @@ def build_city(city, updated_str):
 
 
 def build():
-    updated_str = datetime.now(ZoneInfo(TZ)).strftime("%d.%m.%Y %H:%M %Z")
+    now = datetime.now(ZoneInfo(TZ))
+    updated_str = now.strftime("%d.%m.%Y %H:%M %Z")
+    cache_buster = now.strftime("%Y%m%d%H%M")
     for city in CITIES:
-        build_city(city, updated_str)
+        build_city(city, updated_str, cache_buster)
 
 
 if __name__ == "__main__":

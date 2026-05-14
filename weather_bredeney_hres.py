@@ -6,8 +6,9 @@ saves a 3-panel chart (temperature, precipitation, sunshine).
 Usage: `uv run python weather_bredeney_hres.py`
 """
 import sys
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
@@ -26,7 +27,7 @@ OUT_DIR.mkdir(exist_ok=True)
 
 
 def fetch_hres(lat: float = LAT, lon: float = LON, days: int = 3) -> pd.DataFrame:
-    start = date.today()
+    start = datetime.now(ZoneInfo(TZ)).date()
     end = start + timedelta(days=days - 1)
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
