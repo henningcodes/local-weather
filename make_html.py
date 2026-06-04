@@ -352,7 +352,7 @@ def build_rain_section(rain, today_date, cache_buster, png_name):
     measured = sum(v for v, d in zip(mm, dates) if d < today_date)
     today_mm = sum(v for v, d in zip(mm, dates) if d == today_date)
     forecast = sum(v for v, d in zip(mm, dates) if d > today_date)
-    max_day = float(mm.max()) if len(mm) else 0.0
+    tomorrow_mm = sum(v for v, d in zip(mm, dates) if (d - today_date).days == 1)
 
     daily_rows = []
     for ts, row in df.iterrows():
@@ -397,7 +397,7 @@ def build_rain_section(rain, today_date, cache_buster, png_name):
       <div class="stat rain"><span class="v">{measured:.0f}<span class="u">mm</span></span><span class="l">letzte {HISTORY_DAYS} T</span></div>
       <div class="stat rain"><span class="v">{today_mm:.1f}<span class="u">mm</span></span><span class="l">heute</span></div>
       <div class="stat rain"><span class="v">{forecast:.0f}<span class="u">mm</span></span><span class="l">nächste {FORECAST_DAYS} T</span></div>
-      <div class="stat rain"><span class="v">{max_day:.1f}<span class="u">mm</span></span><span class="l">stärkster Tag</span></div>
+      <div class="stat rain"><span class="v">{tomorrow_mm:.1f}<span class="u">mm</span></span><span class="l">morgen</span></div>
     </div>
   </article>
 </section>

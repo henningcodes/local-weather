@@ -166,11 +166,11 @@ def plot_rain(rain: pd.Series, path: Path, title: str = LOCATION,
     ax.grid(True, axis="y", alpha=0.3)
     ax.set_title(f"{title} — Niederschlag (DWD)", pad=10)
 
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+    ax.xaxis.set_major_locator(mdates.DayLocator())
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
     for label in ax.get_xticklabels():
-        label.set_rotation(45)
-        label.set_horizontalalignment("right")
+        label.set_rotation(90)
+        label.set_horizontalalignment("center")
 
     ax.legend(
         handles=[Patch(color=RAIN, label="gemessen"),
