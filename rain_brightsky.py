@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 import pandas as pd
@@ -33,6 +32,8 @@ DETAIL_BACK = 2            # last N days rendered in 6-hour blocks
 
 RAIN = "#2980b9"           # same blue as the ECMWF precip panel
 RAIN_FC = "#9ecae1"        # lighter blue: forecast / not yet measured
+
+WEEKDAY_DE = {0: "Mo", 1: "Di", 2: "Mi", 3: "Do", 4: "Fr", 5: "Sa", 6: "So"}
 
 OUT_DIR = Path("data")
 
@@ -166,11 +167,17 @@ def plot_rain(rain: pd.Series, path: Path, title: str = LOCATION,
     ax.grid(True, axis="y", alpha=0.3)
     ax.set_title(f"{title} — Niederschlag (DWD)", pad=10)
 
-    ax.xaxis.set_major_locator(mdates.DayLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
-    for label in ax.get_xticklabels():
-        label.set_rotation(90)
-        label.set_horizontalalignment("center")
+    today = pd.Timestamp.now(tz=tz).date()
+    ax.set_xticks(list(df.index))
+    ax.set_xticklabels(
+        [f"{WEEKDAY_DE[ts.weekday()]} {ts.strftime('%d.%m')}" for ts in df.index],
+        rotation=90, ha="center",
+    )
+    # Heute farblich hervorheben
+    for ts, lab in zip(df.index, ax.get_xticklabels()):
+        if ts.date() == today:
+            lab.set_color(RAIN)
+            lab.set_fontweight("bold")
 
     ax.legend(
         handles=[Patch(color=RAIN, label="gemessen"),
