@@ -16,6 +16,9 @@ from zoneinfo import ZoneInfo
 from weather_bredeney_hres import (
     MODEL, TZ, daily_summary, fetch_hres, plot,
 )
+from rain_brightsky import (
+    HISTORY_DAYS, FORECAST_DAYS, daily_frame, detail_blocks, fetch_rain, plot_rain,
+)
 
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception: pass
@@ -215,6 +218,17 @@ HTML = """<!doctype html>
   }}
   tbody tr:last-child td {{ border-bottom: none; }}
 
+  .sectionhead {{ margin: 2.25rem 0 1rem; }}
+  .sectionhead h2 {{
+    font-size: 1.25rem; font-weight: 700;
+    letter-spacing: -0.02em; margin: 0;
+  }}
+  .sectionhead p {{ color: var(--text-dim); font-size: 0.8rem; margin: 0.25rem 0 0; }}
+  td.s-real {{ color: var(--text-dim); }}
+  td.s-prog {{ color: var(--rain); }}
+  td.s-mix  {{ color: var(--temp); }}
+  tr.total td {{ font-weight: 700; border-top: 1px solid var(--border); }}
+
   footer {{
     color: var(--text-dim); font-size: 0.72rem;
     margin: 1.5rem 0 0;
@@ -246,7 +260,7 @@ HTML = """<!doctype html>
   <summary>Stündliche Werte</summary>
   {hourly_html}
 </details>
-
+{rain_html}
 <footer>
   Daten: <a href="https://open-meteo.com">Open-Meteo</a> /
   <a href="https://www.ecmwf.int">ECMWF</a> · Modell: {model}<br>
@@ -322,6 +336,92 @@ def build_hourly(df, today_date):
     return "\n".join(blocks)
 
 
+RAIN_STATUS = {
+    "realisiert": ("gemessen", "s-real"),
+    "gemischt":   ("heute",    "s-mix"),
+    "prognose":   ("Prognose", "s-prog"),
+}
+
+
+def build_rain_section(rain, today_date, cache_buster, png_name):
+    """DWD precipitation block (chart + cards + table), styled like the
+    forecast sections above. Only used on the Essen page."""
+    df = daily_frame(rain)
+    dates = [ts.date() for ts in df.index]
+    mm = df["mm"].to_numpy()
+    measured = sum(v for v, d in zip(mm, dates) if d < today_date)
+    today_mm = sum(v for v, d in zip(mm, dates) if d == today_date)
+    forecast = sum(v for v, d in zip(mm, dates) if d > today_date)
+    max_day = float(mm.max()) if len(mm) else 0.0
+
+    daily_rows = []
+    for ts, row in df.iterrows():
+        txt, cls = RAIN_STATUS[row["status"]]
+        daily_rows.append(
+            f"<tr><td>{_day_label(ts.date(), today_date)}</td>"
+            f"<td>{row['mm']:.1f}</td>"
+            f'<td class="{cls}">{txt}</td></tr>'
+        )
+
+    detail_rows = []
+    for b in detail_blocks(rain):
+        label = _day_label(b["date"], today_date)
+        for i, r in enumerate(b["rows"]):
+            txt, cls = RAIN_STATUS[r["status"]]
+            detail_rows.append(
+                f"<tr><td>{label if i == 0 else ''}</td>"
+                f"<td>{r['window']} Uhr</td><td>{r['mm']:.1f}</td>"
+                f'<td class="{cls}">{txt}</td></tr>'
+            )
+        ttxt, tcls = RAIN_STATUS[b["status"]]
+        detail_rows.append(
+            f'<tr class="total"><td></td><td>Gesamt</td>'
+            f"<td>{b['total_mm']:.1f}</td>"
+            f'<td class="{tcls}">{ttxt}</td></tr>'
+        )
+
+    return f"""
+<div class="sectionhead">
+  <h2>Niederschlag</h2>
+  <p>DWD-Messung der letzten {HISTORY_DAYS} Tage + {FORECAST_DAYS}-Tage-Prognose · Bright Sky</p>
+</div>
+
+<section class="chart">
+  <img src="{png_name}?v={cache_buster}" alt="Niederschlag {HISTORY_DAYS} Tage + Prognose" loading="lazy">
+</section>
+
+<section class="cards">
+  <article class="card">
+    <h2>Übersicht · DWD</h2>
+    <div class="stats">
+      <div class="stat rain"><span class="v">{measured:.0f}<span class="u">mm</span></span><span class="l">letzte {HISTORY_DAYS} T</span></div>
+      <div class="stat rain"><span class="v">{today_mm:.1f}<span class="u">mm</span></span><span class="l">heute</span></div>
+      <div class="stat rain"><span class="v">{forecast:.0f}<span class="u">mm</span></span><span class="l">nächste {FORECAST_DAYS} T</span></div>
+      <div class="stat rain"><span class="v">{max_day:.1f}<span class="u">mm</span></span><span class="l">stärkster Tag</span></div>
+    </div>
+  </article>
+</section>
+
+<details>
+  <summary>Niederschlag – Tageswerte &amp; 6-Stunden-Detail</summary>
+  <div class="day-block">
+    <h3>Tageswerte · {HISTORY_DAYS} Tage + Prognose</h3>
+    <table>
+      <thead><tr><th>Tag</th><th>mm</th><th>Status</th></tr></thead>
+      <tbody>{''.join(daily_rows)}</tbody>
+    </table>
+  </div>
+  <div class="day-block">
+    <h3>6-Stunden-Detail · zuletzt &amp; morgen</h3>
+    <table>
+      <thead><tr><th>Tag</th><th>Zeit</th><th>mm</th><th>Status</th></tr></thead>
+      <tbody>{''.join(detail_rows)}</tbody>
+    </table>
+  </div>
+</details>
+"""
+
+
 def build_city(city, updated_str, cache_buster):
     print(f"--- {city['name']} ---")
     df = fetch_hres(lat=city["lat"], lon=city["lon"], days=3)
@@ -330,6 +430,17 @@ def build_city(city, updated_str, cache_buster):
 
     daily = daily_summary(df)
     today_date = df.index[0].date()
+
+    # DWD precipitation (measured history + forecast) — Essen only.
+    rain_html = ""
+    if city["slug"] == "essen":
+        try:
+            rain = fetch_rain(lat=city["lat"], lon=city["lon"])
+            rain_png = f"rain_{city['slug']}.png"
+            plot_rain(rain, SITE / rain_png, title=city["name"])
+            rain_html = build_rain_section(rain, today_date, cache_buster, rain_png)
+        except Exception as exc:
+            print(f"  ! Niederschlag (Bright Sky) übersprungen: {exc}")
 
     html = HTML.format(
         name=city["name"],
@@ -340,6 +451,7 @@ def build_city(city, updated_str, cache_buster):
         options=_options(city["slug"]),
         cards_html=build_cards(daily, today_date),
         hourly_html=build_hourly(df, today_date),
+        rain_html=rain_html,
     )
 
     out = SITE / _page_url(city)
