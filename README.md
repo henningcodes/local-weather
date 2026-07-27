@@ -4,7 +4,7 @@
 
 GitHub Actions runs `make_html.py` twice a day (08:00 and 20:00 UTC — safely
 after the 00Z and 12Z ECMWF runs are available on Open-Meteo) and deploys
-the generated `site/` to Pages.
+the generated `site/` to Pages. change so that it stays online
 
 ## Local development
 
