@@ -14,7 +14,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from weather_bredeney_hres import (
-    MODEL, TZ, daily_summary, fetch_hres, plot,
+    MODEL, TERRACE_LEVELS, TZ, beaufort, compass, daily_summary, fetch_hres,
+    plot, terrace_advice,
 )
 from rain_brightsky import (
     HISTORY_DAYS, FORECAST_DAYS, daily_frame, detail_blocks, fetch_rain, plot_rain,
@@ -34,6 +35,26 @@ SITE = Path("site")
 SITE.mkdir(exist_ok=True)
 
 WEEKDAY_DE = {0: "Mo", 1: "Di", 2: "Mi", 3: "Do", 4: "Fr", 5: "Sa", 6: "So"}
+
+
+def _terrace_legend():
+    """Schwellen-Tabelle für die Seite, aus TERRACE_LEVELS abgeleitet — damit
+    Legende und Ampel nicht auseinanderlaufen können."""
+    out, lower = [], None
+    for i, (limit, level, text) in enumerate(TERRACE_LEVELS):
+        last = i == len(TERRACE_LEVELS) - 1
+        if last:
+            label = f"über {lower}"
+        elif lower is None:
+            label = f"unter {limit}"
+        else:
+            label = f"{lower}–{limit}"
+        out.append((label, level, text))
+        lower = limit
+    return out
+
+
+TERRACE_LEVELS_DISPLAY = _terrace_legend()
 
 # Coordinates → snapped by Open-Meteo to the nearest 0.25° grid point.
 CITIES = [
@@ -64,6 +85,11 @@ HTML = """<!doctype html>
     --temp: #c0392b;
     --rain: #2980b9;
     --sun:  #e69100;
+    --wind: #16a085;
+    --ok:     #2e8b3d;
+    --warn:   #b87400;
+    --alert:  #d35400;
+    --danger: #c0392b;
     --chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path fill='%236e6e73' d='M6 8 0 0h12z'/></svg>");
   }}
   @media (prefers-color-scheme: dark) {{
@@ -76,6 +102,11 @@ HTML = """<!doctype html>
       --temp: #ff6b5e;
       --rain: #5ac8fa;
       --sun:  #ffd60a;
+      --wind: #40d6bb;
+      --ok:     #30d158;
+      --warn:   #ffd60a;
+      --alert:  #ff9f0a;
+      --danger: #ff453a;
       --chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path fill='%2398989e' d='M6 8 0 0h12z'/></svg>");
     }}
   }}
@@ -170,6 +201,42 @@ HTML = """<!doctype html>
   .stat.tmax .v {{ color: var(--temp); }}
   .stat.rain .v {{ color: var(--rain); }}
   .stat.sun  .v {{ color: var(--sun);  }}
+  .stat.wind .v {{ color: var(--wind); }}
+
+  /* Terrassen-Ampel: Böen entscheiden, ob der Schirm zubleiben kann. */
+  .verdict {{
+    background: var(--card);
+    border: 0.5px solid var(--border);
+    border-left: 5px solid var(--lvl, var(--ok));
+    border-radius: 16px;
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 1.5rem;
+  }}
+  .verdict .head {{
+    font-size: 0.72rem; font-weight: 600; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 0.4rem;
+  }}
+  .verdict .msg {{
+    font-size: 1.15rem; font-weight: 650;
+    letter-spacing: -0.01em; color: var(--lvl, var(--ok));
+  }}
+  .verdict .sub {{
+    color: var(--text-dim); font-size: 0.8rem; margin-top: 0.3rem;
+    font-variant-numeric: tabular-nums;
+  }}
+  .lvl-ok     {{ --lvl: var(--ok); }}
+  .lvl-warn   {{ --lvl: var(--warn); }}
+  .lvl-alert  {{ --lvl: var(--alert); }}
+  .lvl-danger {{ --lvl: var(--danger); }}
+  /* --lvl allein faerbt nichts: Tabellenzellen brauchen die Zuweisung explizit. */
+  td[class^="lvl-"] {{ color: var(--lvl); font-weight: 550; }}
+  .advice {{
+    margin-top: 0.75rem; padding-top: 0.7rem;
+    border-top: 0.5px solid var(--border);
+    font-size: 0.85rem; font-weight: 550;
+    color: var(--lvl, var(--ok));
+  }}
 
   details {{
     background: var(--card);
@@ -250,6 +317,7 @@ HTML = """<!doctype html>
   <p class="updated">Aktualisiert {updated}</p>
 </header>
 
+{verdict_html}
 <section class="chart">
   <img src="{png}" alt="3-Tages-Vorhersage" loading="lazy">
 </section>
@@ -260,7 +328,7 @@ HTML = """<!doctype html>
   <summary>Stündliche Werte</summary>
   {hourly_html}
 </details>
-{rain_html}
+{wind_html}{rain_html}
 <footer>
   Daten: <a href="https://open-meteo.com">Open-Meteo</a> /
   <a href="https://www.ecmwf.int">ECMWF</a> · Modell: {model}<br>
@@ -312,6 +380,71 @@ def build_cards(daily, today_date):
     return "\n".join(blocks)
 
 
+def build_verdict(df):
+    """Terrassen-Ampel für die nächsten 24 h — die eine Frage, die zählt:
+    Schirm zu oder kann er offen bleiben? Maßgeblich ist die stärkste Böe."""
+    window = df.iloc[:24]
+    gust = float(window["gust_kmh"].max())
+    level, text = terrace_advice(gust)
+    peak_ts = window["gust_kmh"].idxmax()
+    mean_wind = float(window["wind_kmh"].max())
+    direction = compass(float(window.loc[peak_ts, "wind_dir"]))
+    return f"""
+<section class="verdict lvl-{level}">
+  <p class="head">Terrasse · nächste 24 h</p>
+  <p class="msg">{text}</p>
+  <p class="sub">Stärkste Böe {gust:.0f} km/h gegen {peak_ts.strftime('%H')} Uhr
+     aus {direction} · Mittelwind bis {mean_wind:.0f} km/h (Bft {beaufort(mean_wind)})</p>
+</section>"""
+
+
+def build_wind_section(df, daily, today_date):
+    """Wind-Block: je Tag Spitzenböe, Mittelwind, Richtung + Klartext-Empfehlung."""
+    cards = []
+    for d, row in daily.iterrows():
+        day = df[df.index.date == d]
+        gust = float(row.Gust_max_kmh)
+        level, text = terrace_advice(gust)
+        peak_ts = day["gust_kmh"].idxmax()
+        direction = compass(float(day.loc[peak_ts, "wind_dir"]))
+        date_str = f"{WEEKDAY_DE[d.weekday()]} {d.strftime('%d.%m.')}"
+        cards.append(f"""
+  <article class="card lvl-{level}">
+    <h2>{_day_label(d, today_date)} · {date_str}</h2>
+    <div class="stats">
+      <div class="stat wind"><span class="v">{gust:.0f}<span class="u">km/h</span></span><span class="l">Böen max</span></div>
+      <div class="stat wind"><span class="v">{row.Wind_max_kmh:.0f}<span class="u">km/h</span></span><span class="l">Wind max</span></div>
+      <div class="stat"><span class="v">{beaufort(row.Wind_max_kmh)}<span class="u">Bft</span></span><span class="l">Windstärke</span></div>
+      <div class="stat"><span class="v">{direction}</span><span class="l">Richtung</span></div>
+    </div>
+    <p class="advice">{text}</p>
+  </article>""")
+
+    rows = []
+    for limit, level, text in TERRACE_LEVELS_DISPLAY:
+        rows.append(f'<tr><td>{limit}</td><td class="lvl-{level}">{text}</td></tr>')
+
+    return f"""
+<div class="sectionhead">
+  <h2>Wind &amp; Terrasse</h2>
+  <p>Böen (nicht Mittelwind) entscheiden, ob Schirm und Auflagen draußen bleiben können</p>
+</div>
+
+<section class="cards">{''.join(cards)}
+</section>
+
+<details>
+  <summary>Wann muss was rein?</summary>
+  <div class="day-block">
+    <table>
+      <thead><tr><th>Böen km/h</th><th>Empfehlung</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+  </div>
+</details>
+"""
+
+
 def build_hourly(df, today_date):
     blocks = []
     for d, g in df.groupby(df.index.date):
@@ -319,17 +452,22 @@ def build_hourly(df, today_date):
         label = _day_label(d, today_date)
         rows = []
         for ts, r in g.iterrows():
+            lvl = terrace_advice(r.gust_kmh)[0]
             rows.append(
                 f"<tr><td>{ts.strftime('%H:%M')}</td>"
                 f"<td>{r.temp_c:.1f}°</td>"
                 f"<td>{r.precip_mm:.1f}</td>"
-                f"<td>{int(round(r.sun_min))}</td></tr>"
+                f"<td>{int(round(r.sun_min))}</td>"
+                f"<td>{r.wind_kmh:.0f}</td>"
+                f'<td class="lvl-{lvl}">{r.gust_kmh:.0f}</td>'
+                f"<td>{compass(r.wind_dir)}</td></tr>"
             )
         blocks.append(f"""
   <div class="day-block">
     <h3>{label} · {date_str}</h3>
     <table>
-      <thead><tr><th>Uhr</th><th>Temp</th><th>mm</th><th>Sonne min</th></tr></thead>
+      <thead><tr><th>Uhr</th><th>Temp</th><th>mm</th><th>Sonne</th>
+        <th>Wind</th><th>Böe</th><th>Ri.</th></tr></thead>
       <tbody>{"".join(rows)}</tbody>
     </table>
   </div>""")
@@ -451,6 +589,8 @@ def build_city(city, updated_str, cache_buster):
         options=_options(city["slug"]),
         cards_html=build_cards(daily, today_date),
         hourly_html=build_hourly(df, today_date),
+        verdict_html=build_verdict(df),
+        wind_html=build_wind_section(df, daily, today_date),
         rain_html=rain_html,
     )
 

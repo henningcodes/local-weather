@@ -1,7 +1,7 @@
 """
 Pulls the ECMWF HRES (IFS deterministic, 9 km) forecast for Essen-Bredeney
 for the next 3 days from Open-Meteo, prints an hourly + daily table and
-saves a 3-panel chart (temperature, precipitation, sunshine).
+saves a 4-panel chart (temperature, precipitation, sunshine, wind).
 
 Usage: `uv run python weather_bredeney_hres.py`
 """
@@ -25,6 +25,43 @@ TZ = "Europe/Berlin"
 OUT_DIR = Path("data")
 OUT_DIR.mkdir(exist_ok=True)
 
+# Böen-Schwellen (km/h) für Terrassen-Mobiliar. Was den Schirm umwirft, ist die BÖE,
+# nicht das Mittel — die Einschätzung hängt deshalb an wind_gusts_10m.
+# WICHTIG: Das sind BÖEN-Werte, keine Beaufort-Grenzen. Böen liegen typisch beim
+# 1,5- bis 2-fachen des Mittelwinds; die Beaufort-Tabelle direkt auf Böen anzuwenden
+# warnt viel zu früh (25 km/h Böe ≈ Bft 2-3 im Mittel — da passiert nichts).
+TERRACE_LEVELS = [
+    (25, "ok",     "Schirm kann offen bleiben"),
+    (45, "warn",   "Schirm zuklappen"),
+    (65, "alert",  "Schirm zu, Leichtes reinholen"),
+    (999, "danger", "Alles sichern und reinholen"),
+]
+
+COMPASS_DE = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"]
+
+
+def terrace_advice(gust_kmh: float) -> tuple[str, str]:
+    """(level, Klartext) für die stärkste Böe eines Zeitraums."""
+    for limit, level, text in TERRACE_LEVELS:
+        if gust_kmh < limit:
+            return level, text
+    return TERRACE_LEVELS[-1][1], TERRACE_LEVELS[-1][2]
+
+
+def beaufort(kmh: float) -> int:
+    """Beaufort-Stufe aus km/h (v = 3.01 * Bft^1.5, nach Windstärke aufgelöst)."""
+    for bft in range(12, -1, -1):
+        if kmh >= 3.01 * bft ** 1.5:
+            return bft
+    return 0
+
+
+def compass(deg: float) -> str:
+    """Windrichtung als Kompass-Kürzel (meteorologisch: Richtung, aus der es weht)."""
+    if deg != deg:  # NaN
+        return "—"
+    return COMPASS_DE[int(deg % 360 / 45 + 0.5) % 8]
+
 
 def fetch_hres(lat: float = LAT, lon: float = LON, days: int = 3) -> pd.DataFrame:
     start = datetime.now(ZoneInfo(TZ)).date()
@@ -32,7 +69,8 @@ def fetch_hres(lat: float = LAT, lon: float = LON, days: int = 3) -> pd.DataFram
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat, "longitude": lon,
-        "hourly": "temperature_2m,precipitation,sunshine_duration",
+        "hourly": ("temperature_2m,precipitation,sunshine_duration,"
+                   "wind_speed_10m,wind_gusts_10m,wind_direction_10m"),
         "models": MODEL,
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
@@ -47,6 +85,9 @@ def fetch_hres(lat: float = LAT, lon: float = LON, days: int = 3) -> pd.DataFram
         "temp_c": h["temperature_2m"],
         "precip_mm": h["precipitation"],
         "sun_min": [s / 60.0 for s in h["sunshine_duration"]],
+        "wind_kmh": h["wind_speed_10m"],      # Open-Meteo liefert km/h per Default
+        "gust_kmh": h["wind_gusts_10m"],
+        "wind_dir": h["wind_direction_10m"],
     }).set_index("time")
     df.attrs["grid_lat"] = j["latitude"]
     df.attrs["grid_lon"] = j["longitude"]
@@ -62,6 +103,8 @@ def daily_summary(df: pd.DataFrame) -> pd.DataFrame:
         "Tmean_C": g["temp_c"].mean().round(1),
         "Precip_mm": g["precip_mm"].sum().round(1),
         "Sun_h": (g["sun_min"].sum() / 60).round(1),
+        "Wind_max_kmh": g["wind_kmh"].max().round(0),
+        "Gust_max_kmh": g["gust_kmh"].max().round(0),
     })
 
 
@@ -79,9 +122,18 @@ def print_tables(df: pd.DataFrame) -> None:
     out["temp_c"] = out["temp_c"].round(1)
     out["precip_mm"] = out["precip_mm"].round(2)
     out["sun_min"] = out["sun_min"].round(0).astype(int)
+    out["wind_kmh"] = out["wind_kmh"].round(0).astype(int)
+    out["gust_kmh"] = out["gust_kmh"].round(0).astype(int)
+    out["wind_dir"] = out["wind_dir"].map(compass)
     out.index = out.index.strftime("%a %d.%m %H:%M")
-    out.columns = ["T °C", "Niederschlag mm", "Sonne min"]
+    out.columns = ["T °C", "Niederschlag mm", "Sonne min", "Wind km/h", "Böe km/h", "Richtung"]
     print(out.to_string())
+
+    gmax = df["gust_kmh"].max()
+    wmax = df["wind_kmh"].max()
+    level, text = terrace_advice(gmax)
+    print(f"\n=== Terrasse ===\nStärkste Böe in 3 Tagen: {gmax:.0f} km/h  ·  "
+          f"Mittelwind bis {wmax:.0f} km/h (Bft {beaufort(wmax)}) → {text} [{level}]")
 
 
 def plot(df: pd.DataFrame, path: Path, title: str = LOCATION) -> None:
@@ -94,7 +146,7 @@ def plot(df: pd.DataFrame, path: Path, title: str = LOCATION) -> None:
         "axes.spines.top": False,
         "axes.spines.right": False,
     })
-    fig, axes = plt.subplots(3, 1, figsize=(7, 10), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(7, 13), sharex=True)
 
     ax = axes[0]
     ax.plot(df.index, df["temp_c"], color="#c0392b", lw=2.4)
@@ -115,6 +167,28 @@ def plot(df: pd.DataFrame, path: Path, title: str = LOCATION) -> None:
     ax.set_ylabel("Sonne [min/h]")
     ax.set_ylim(0, 65)
     ax.grid(True, alpha=0.3)
+
+    # Wind: Böe als Fläche (die entscheidet über den Schirm), Mittelwind als Linie.
+    # Die waagerechten Linien sind die TERRACE_LEVELS-Schwellen.
+    ax = axes[3]
+    ax.fill_between(df.index, df["gust_kmh"], alpha=0.25, color="#16a085",
+                    label="Böen")
+    ax.plot(df.index, df["gust_kmh"], color="#16a085", lw=1.6)
+    ax.plot(df.index, df["wind_kmh"], color="#34495e", lw=2.0, label="Mittelwind")
+    gmax = float(df["gust_kmh"].max())
+    # Eine Schwellenlinie markiert den UEBERGANG: beschriftet wird sie deshalb mit der
+    # Empfehlung der naechsthoeheren Stufe (was gilt, sobald die Boeen drueber liegen).
+    for (limit, _lvl, _below), (_nl, _nlvl, above) in zip(TERRACE_LEVELS[:-1],
+                                                          TERRACE_LEVELS[1:]):
+        if limit > gmax * 1.35:
+            continue          # Schwellen weit über der Prognose nicht mitzeichnen
+        ax.axhline(limit, color="#c0392b", lw=0.9, ls="--", alpha=0.55)
+        ax.annotate(f"ab hier: {above}", (df.index[0], limit), xytext=(3, 3),
+                    textcoords="offset points", fontsize=8, color="#c0392b", alpha=0.9)
+    ax.set_ylabel("Wind [km/h]")
+    ax.set_ylim(0, max(gmax * 1.2, 25))
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
     for ax in axes:
         for d in pd.date_range(df.index[0].normalize(),
